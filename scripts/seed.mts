@@ -21,6 +21,36 @@ const { collectionsReport } = await import('../lib/reports')
 
 const admin = createAdminClient()
 
+/**
+ * A minimal but valid one-page PDF with the given lines of text, so the
+ * seeded slip opens in a browser. The xref table needs each object's exact
+ * byte offset, so the file is assembled piece by piece (ASCII only).
+ */
+function buildSlipPdf(lines: string[]): string {
+  const escape = (s: string) => s.replace(/[\\()]/g, (c) => `\\${c}`)
+  const text = lines
+    .map((line, i) => `BT /F1 ${i === 0 ? 16 : 12} Tf 56 ${770 - i * 24} Td (${escape(line)}) Tj ET`)
+    .join('\n')
+  const objects = [
+    '<< /Type /Catalog /Pages 2 0 R >>',
+    '<< /Type /Pages /Kids [3 0 R] /Count 1 >>',
+    '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Resources << /Font << /F1 4 0 R >> >> /Contents 5 0 R >>',
+    '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>',
+    `<< /Length ${text.length} >>\nstream\n${text}\nendstream`,
+  ]
+  let pdf = '%PDF-1.4\n'
+  const offsets: number[] = []
+  objects.forEach((body, i) => {
+    offsets.push(pdf.length)
+    pdf += `${i + 1} 0 obj\n${body}\nendobj\n`
+  })
+  const xrefOffset = pdf.length
+  pdf += `xref\n0 ${objects.length + 1}\n0000000000 65535 f \n`
+  pdf += offsets.map((o) => `${String(o).padStart(10, '0')} 00000 n \n`).join('')
+  pdf += `trailer\n<< /Size ${objects.length + 1} /Root 1 0 R >>\nstartxref\n${xrefOffset}\n%%EOF\n`
+  return pdf
+}
+
 async function createUser(email: string): Promise<string> {
   const { data, error } = await admin.auth.admin.createUser({ email, password: SEED_PASSWORD, email_confirm: true })
   if (error || !data.user) throw new Error(`Could not create ${email}: ${error?.message}`)
@@ -125,7 +155,22 @@ async function main() {
   // 2. Bank transfer RM 2,000.00, 2026-03-01 00:30 Malaysia time, recorded by
   //    staff with a slip, then approved by the manager.
   const slipPath = `${northwind.id}/seed-aisyah-bank-transfer.pdf`
-  const slip = new Blob(['%PDF-1.4\n% seed bank transfer slip\n'], { type: 'application/pdf' })
+  const slip = new Blob(
+    [
+      buildSlipPdf([
+        'Online Banking - Fund Transfer Receipt (sample)',
+        '',
+        'Status: Successful',
+        'Date: 01 Mar 2026, 00:30 (MYT)',
+        'Reference: SEED-AISYAH-0301',
+        'From: AISYAH RAHMAN',
+        'To: NORTHWIND PROPERTIES SDN BHD',
+        'Amount: RM 2,000.00',
+        'Recipient reference: Unit A-12-3 rent',
+      ]),
+    ],
+    { type: 'application/pdf' },
+  )
   const upload = await admin.storage.from(SLIP_BUCKET).upload(slipPath, slip, { contentType: 'application/pdf' })
   if (upload.error) throw new Error(`Slip upload failed: ${upload.error.message}`)
 
