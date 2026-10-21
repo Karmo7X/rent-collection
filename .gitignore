@@ -39,3 +39,9 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# generated Prisma client (rebuilt by `prisma generate`)
+/generated/
+
+# env example is committed on purpose
+!.env.example
