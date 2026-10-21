@@ -1,5 +1,6 @@
 'use client'
 
+import { LogOut } from 'lucide-react'
 import { useRouter } from 'next/navigation'
 import { useState } from 'react'
 import { toast } from 'sonner'
@@ -24,8 +25,9 @@ export function LogoutButton() {
   }
 
   return (
-    <Button variant="outline" size="sm" onClick={logout} disabled={pending}>
-      {pending ? 'Signing out…' : 'Sign out'}
+    <Button variant="ghost" size="sm" onClick={logout} disabled={pending} className="text-muted-foreground">
+      <LogOut className="size-4" />
+      <span className="hidden sm:inline">{pending ? 'Signing out…' : 'Sign out'}</span>
     </Button>
   )
 }
