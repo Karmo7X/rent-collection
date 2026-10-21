@@ -1,4 +1,5 @@
 import { type Actor, requireRole } from '@/lib/actor'
+import { malaysiaToday } from '@/lib/billing'
 import { badRequest } from '@/lib/errors'
 import { toSen } from '@/lib/convert'
 import { prisma } from '@/lib/prisma'
@@ -40,4 +41,48 @@ export async function collectionsReport(actor: Actor, from: string | null, to: s
     ORDER BY m.month_start`
 
   return rows.map((row) => ({ month: row.month, collectedSen: toSen(row.collected) }))
+}
+
+/**
+ * Number of the org's invoices that are overdue now: due before today's
+ * Malaysia date and not fully paid (same rule as invoiceStatus 'overdue').
+ */
+export async function overdueInvoiceCount(actor: Actor, now: Date): Promise<number> {
+  requireRole(actor, 'manager', 'staff')
+  const [row] = await prisma.$queryRaw<Array<{ count: bigint }>>`
+    SELECT count(*)::bigint AS count
+    FROM public.invoices i
+    WHERE i.org_id = ${actor.orgId}::uuid
+      AND i.due_date < ${malaysiaToday(now)}::date
+      AND i.amount_sen > (SELECT coalesce(sum(a.amount_sen), 0) FROM public.payment_allocations a WHERE a.invoice_id = i.id)`
+  return Number(row.count)
+}
+
+export interface PendingPayment {
+  id: string
+  leaseId: string
+  unitName: string
+  tenantName: string
+  amountSen: number
+  method: 'cash' | 'bank_transfer' | 'online'
+  receivedAt: Date
+}
+
+/** The org's payments waiting for a manager's approval, oldest first. */
+export async function pendingPayments(actor: Actor): Promise<PendingPayment[]> {
+  requireRole(actor, 'manager', 'staff')
+  const rows = await prisma.payments.findMany({
+    where: { org_id: actor.orgId, status: 'pending_verification' },
+    include: { leases: { include: { units: true, tenants: true } } },
+    orderBy: { created_at: 'asc' },
+  })
+  return rows.map((p) => ({
+    id: p.id,
+    leaseId: p.lease_id,
+    unitName: p.leases.units.name,
+    tenantName: p.leases.tenants.full_name,
+    amountSen: toSen(p.amount_sen),
+    method: p.method,
+    receivedAt: p.received_at,
+  }))
 }

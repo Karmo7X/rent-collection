@@ -158,6 +158,85 @@ export async function getLeaseDetail(actor: Actor, leaseId: string, now: Date): 
   }
 }
 
+export interface LeaseSummary {
+  id: string
+  unitName: string
+  tenantName: string
+  startDate: string
+  endDate: string
+  monthlyRentSen: number
+  totalSen: number
+  paidSen: number
+}
+
+/** Leases list: staff/managers see their org's, tenants their own. */
+export async function listLeases(actor: Actor): Promise<LeaseSummary[]> {
+  if (actor.kind === 'none') return []
+  const rows = await prisma.$queryRaw<
+    Array<{
+      id: string
+      unit_name: string
+      tenant_name: string
+      start_date: Date
+      end_date: Date
+      monthly_rent_sen: bigint
+      total: bigint
+      paid: bigint
+    }>
+  >`
+    SELECT l.id, u.name AS unit_name, t.full_name AS tenant_name, l.start_date, l.end_date, l.monthly_rent_sen,
+           (SELECT coalesce(sum(i.amount_sen), 0) FROM public.invoices i WHERE i.lease_id = l.id)::bigint AS total,
+           (SELECT coalesce(sum(a.amount_sen), 0) FROM public.payment_allocations a WHERE a.lease_id = l.id)::bigint AS paid
+    FROM public.leases l
+    JOIN public.units u ON u.id = l.unit_id
+    JOIN public.tenants t ON t.id = l.tenant_id
+    WHERE l.org_id = ${actor.orgId}::uuid
+      AND (${actor.kind === 'member'} OR l.tenant_id = ${actor.kind === 'tenant' ? actor.tenantId : null}::uuid)
+    ORDER BY u.name, l.start_date`
+  return rows.map((row) => ({
+    id: row.id,
+    unitName: row.unit_name,
+    tenantName: row.tenant_name,
+    startDate: fromDbDate(row.start_date),
+    endDate: fromDbDate(row.end_date),
+    monthlyRentSen: toSen(row.monthly_rent_sen),
+    totalSen: toSen(row.total),
+    paidSen: toSen(row.paid),
+  }))
+}
+
+export interface LeasePageData extends LeaseDetail {
+  unitName: string
+  tenantName: string
+  amountDueNowSen: number
+  paymentExtras: Record<string, { slipPath: string | null; reason: string | null; billId: string | null }>
+}
+
+/** Everything the lease page shows; visibility is checked by getLeaseDetail. */
+export async function getLeasePageData(actor: Actor, leaseId: string, now: Date): Promise<LeasePageData> {
+  const detail = await getLeaseDetail(actor, leaseId, now)
+  const [unit, tenant, payments] = await Promise.all([
+    prisma.units.findUniqueOrThrow({ where: { id: detail.lease.unitId } }),
+    prisma.tenants.findUniqueOrThrow({ where: { id: detail.lease.tenantId } }),
+    prisma.payments.findMany({
+      where: { lease_id: detail.lease.id },
+      select: { id: true, slip_path: true, reason: true, gateway_bill_id: true },
+    }),
+  ])
+  const today = malaysiaToday(now)
+  return {
+    ...detail,
+    unitName: unit.name,
+    tenantName: tenant.full_name,
+    amountDueNowSen: detail.invoices
+      .filter((invoice) => invoice.dueDate <= today)
+      .reduce((sum, invoice) => sum + Math.max(invoice.amountSen - invoice.paidSen, 0), 0),
+    paymentExtras: Object.fromEntries(
+      payments.map((p) => [p.id, { slipPath: p.slip_path, reason: p.reason, billId: p.gateway_bill_id }]),
+    ),
+  }
+}
+
 /**
  * POST /api/leases/:leaseId/gateway-bills, for the lease's own tenant.
  * Amount = unpaid part of the invoices due on or before today (Malaysia).

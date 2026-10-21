@@ -1,5 +1,7 @@
 import 'server-only'
 import { createClient as createSupabaseClient } from '@supabase/supabase-js'
+import { redirect } from 'next/navigation'
+import { connection } from 'next/server'
 import { type Actor, loadActor } from '@/lib/actor'
 import { unauthorized } from '@/lib/errors'
 import { createClient } from '@/lib/supabase/server'
@@ -15,6 +17,21 @@ export async function getActor(req: Request): Promise<Actor> {
   const userId = await authenticatedUserId(req)
   if (!userId) throw unauthorized()
   return loadActor(userId)
+}
+
+/**
+ * For pages (server components): the Actor from the session cookie, or a
+ * redirect to /login. Must be called inside a <Suspense> boundary
+ * (cacheComponents: reading cookies is request-time work).
+ */
+export async function getPageActor(): Promise<Actor> {
+  // Marks the rest of the render as request-time (cacheComponents): getUser()
+  // checks token expiry against the clock, and pages use `new Date()` after this.
+  await connection()
+  const supabase = await createClient()
+  const { data, error } = await supabase.auth.getUser()
+  if (error || !data.user) redirect('/login')
+  return loadActor(data.user.id)
 }
 
 async function authenticatedUserId(req: Request): Promise<string | null> {

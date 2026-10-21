@@ -1,4 +1,5 @@
 import 'server-only'
+import { unstable_rethrow } from 'next/navigation'
 import { NextResponse } from 'next/server'
 import { HttpError, INVALID_JSON } from '@/lib/errors'
 
@@ -7,6 +8,9 @@ export async function handle(fn: () => Promise<Response>): Promise<Response> {
   try {
     return await fn()
   } catch (error) {
+    // Next.js signals things like "bail out of prerendering" with internal
+    // errors that must propagate, not become a 500.
+    unstable_rethrow(error)
     if (error instanceof HttpError) {
       return NextResponse.json({ error: error.message }, { status: error.status })
     }
