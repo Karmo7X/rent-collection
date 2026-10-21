@@ -8,10 +8,12 @@ Part of the rent collection module for Malaysian property management companies: 
 npx supabase start            # local stack from supabase/config.toml (Docker)
 npx supabase db reset         # schema, RLS, storage bucket from supabase/migrations/
 npm install                   # also runs `prisma generate`
-cp .env.example .env.local    # local values; compare with `npx supabase status`
+cp .env.example .env.local    # then set SUPABASE_SECRET_KEY = SECRET_KEY from `npx supabase status`
 npm run seed                  # the brief's orgs, users, leases, payments, via the app's services
 npm run build && npm start    # http://localhost:3000
 ```
+
+`.env.example` has working local values for everything except `SUPABASE_SECRET_KEY`. GitHub's push protection blocks committing it, even the default local one, so copy it from `npx supabase status` (the `SECRET_KEY` line). `npm run seed` needs it.
 
 **Seeded accounts** (all share the password `RentCollect-2026!`):
 
